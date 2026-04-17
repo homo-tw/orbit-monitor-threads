@@ -1,0 +1,6 @@
+.env
+storage_state.json
+posts.db
+__pycache__/
+*.pyc
+.venv/
