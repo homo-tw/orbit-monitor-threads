@@ -1,6 +1,8 @@
 import requests
 from config import DISCORD_WEBHOOK_URL
 
+HEADER = "以下是最近可能有類似需求的貼文:"
+
 
 def notify_batch(items: list[tuple[dict, dict]]) -> list[bool]:
     if not items:
@@ -9,27 +11,35 @@ def notify_batch(items: list[tuple[dict, dict]]) -> list[bool]:
         print("[notifier] DISCORD_WEBHOOK_URL 未設定,跳過")
         return [False] * len(items)
 
-    urls = [f"https://www.threads.net{post['url']}" for post, _ in items]
+    lines = [
+        f"- [@{post['author']}](https://www.threads.net{post['url']})"
+        for post, _ in items
+    ]
     results = [False] * len(items)
 
-    # Discord 單則訊息 content 上限 2000 字,分批送
+    # Discord 單則訊息 content 上限 2000 字,分批送;第一批加 header
     batch: list[int] = []
-    batch_len = 0
-    for i, url in enumerate(urls):
-        add = len(url) + 1  # 換行
+    batch_len = len(HEADER) + 1
+    first = True
+    for i, line in enumerate(lines):
+        add = len(line) + 1
         if batch and batch_len + add > 1900:
-            _flush(batch, urls, results)
+            _flush(batch, lines, results, with_header=first)
+            first = False
             batch, batch_len = [], 0
         batch.append(i)
         batch_len += add
     if batch:
-        _flush(batch, urls, results)
+        _flush(batch, lines, results, with_header=first)
 
     return results
 
 
-def _flush(idxs: list[int], urls: list[str], results: list[bool]) -> None:
-    content = "\n".join(urls[i] for i in idxs)
+def _flush(
+    idxs: list[int], lines: list[str], results: list[bool], with_header: bool
+) -> None:
+    body = "\n".join(lines[i] for i in idxs)
+    content = f"{HEADER}\n{body}" if with_header else body
     try:
         r = requests.post(
             DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10
