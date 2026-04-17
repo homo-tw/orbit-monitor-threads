@@ -2,33 +2,40 @@ import requests
 from config import DISCORD_WEBHOOK_URL
 
 
-def notify(post: dict, classification: dict) -> bool:
+def notify_batch(items: list[tuple[dict, dict]]) -> list[bool]:
+    if not items:
+        return []
     if not DISCORD_WEBHOOK_URL:
         print("[notifier] DISCORD_WEBHOOK_URL 未設定,跳過")
-        return False
+        return [False] * len(items)
 
-    full_url = f"https://www.threads.net{post['url']}"
-    text = post.get("text", "")
-    snippet = text[:500] + ("..." if len(text) > 500 else "")
+    urls = [f"https://www.threads.net{post['url']}" for post, _ in items]
+    results = [False] * len(items)
 
-    embed = {
-        "title": f"@{post['author']} 可能在找預約系統",
-        "description": snippet,
-        "url": full_url,
-        "fields": [
-            {"name": "AI 判斷理由", "value": classification.get("reason", "-")[:1000]},
-            {
-                "name": "信心度",
-                "value": f"{classification.get('confidence', 0):.0%}",
-                "inline": True,
-            },
-        ],
-    }
+    # Discord 單則訊息 content 上限 2000 字,分批送
+    batch: list[int] = []
+    batch_len = 0
+    for i, url in enumerate(urls):
+        add = len(url) + 1  # 換行
+        if batch and batch_len + add > 1900:
+            _flush(batch, urls, results)
+            batch, batch_len = [], 0
+        batch.append(i)
+        batch_len += add
+    if batch:
+        _flush(batch, urls, results)
 
+    return results
+
+
+def _flush(idxs: list[int], urls: list[str], results: list[bool]) -> None:
+    content = "\n".join(urls[i] for i in idxs)
     try:
-        r = requests.post(DISCORD_WEBHOOK_URL, json={"embeds": [embed]}, timeout=10)
+        r = requests.post(
+            DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10
+        )
         r.raise_for_status()
-        return True
+        for i in idxs:
+            results[i] = True
     except Exception as e:
         print(f"[notifier] webhook 失敗: {e}")
-        return False

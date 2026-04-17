@@ -1,13 +1,14 @@
 import asyncio
 import os
 import traceback
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
 from playwright.async_api import async_playwright
 
 from config import (
     KEYWORDS,
     SCAN_INTERVAL_SECONDS,
+    MAX_AGE_DAYS,
     STORAGE_STATE_PATH,
     DB_PATH,
     get_proxy_config,
@@ -15,14 +16,28 @@ from config import (
 from storage import init_db, is_seen, mark_seen
 from scraper import scrape_keyword
 from classifier import classify
-from notifier import notify
+from notifier import notify_batch
 
 
 def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
 
 
+def _is_recent(post: dict, cutoff: datetime) -> bool:
+    ts = post.get("published")
+    if not ts:
+        return False  # 沒時間戳就跳過,避免撈到太舊的
+    try:
+        dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    return dt >= cutoff
+
+
 async def run_once(conn, page) -> None:
+    matches: list[tuple[dict, dict]] = []
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
+
     for kw in KEYWORDS:
         log(f"搜尋關鍵字: {kw}")
         try:
@@ -32,7 +47,11 @@ async def run_once(conn, page) -> None:
             continue
         log(f"  抓到 {len(posts)} 則")
 
-        for post in posts:
+        recent = [p for p in posts if _is_recent(p, cutoff)]
+        if len(recent) < len(posts):
+            log(f"  過濾後 {len(recent)} 則在近 {MAX_AGE_DAYS} 天內")
+
+        for post in recent:
             if is_seen(conn, post["url"]):
                 continue
             try:
@@ -42,14 +61,22 @@ async def run_once(conn, page) -> None:
                 continue
 
             if result["match"]:
-                ok = notify(post, result)
-                mark_seen(conn, post["url"], notified=ok)
+                matches.append((post, result))
                 log(
                     f"  ✅ match @{post['author']} "
                     f"(conf={result['confidence']:.2f}) {post['url']}"
                 )
             else:
                 mark_seen(conn, post["url"], notified=False)
+
+    if not matches:
+        log("本輪無 match")
+        return
+
+    results = notify_batch(matches)
+    for (post, _), ok in zip(matches, results):
+        mark_seen(conn, post["url"], notified=ok)
+    log(f"通知 {sum(results)}/{len(results)} 則")
 
 
 async def main() -> None:

@@ -7,6 +7,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL", "")
 SCAN_INTERVAL_SECONDS = int(os.getenv("SCAN_INTERVAL_SECONDS", "900"))
+MAX_AGE_DAYS = int(os.getenv("MAX_AGE_DAYS", "5"))
 
 PROXY_SERVER = os.getenv("PROXY_SERVER", "").strip()
 PROXY_USERNAME = os.getenv("PROXY_USERNAME", "").strip()

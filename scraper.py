@@ -25,10 +25,18 @@ EXTRACT_JS = r"""
     }
     const text = (node ? node.innerText : '').trim().slice(0, 2000);
 
+    // 時間:從 container 往下找第一個 <time datetime="...">
+    let published = null;
+    if (node) {
+      const timeEl = node.querySelector('time[datetime]');
+      if (timeEl) published = timeEl.getAttribute('datetime');
+    }
+
     results.push({
       url: canonical,
       author: m[1],
       text,
+      published,
     });
   }
   return results;
