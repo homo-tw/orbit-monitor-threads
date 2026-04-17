@@ -4,3 +4,7 @@ posts.db
 __pycache__/
 *.pyc
 .venv/
+venv/
+.session_alert_sent
+.cron.lock
+cron.log

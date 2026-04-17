@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import traceback
 from datetime import datetime, timedelta, timezone
 
@@ -14,13 +15,32 @@ from config import (
     get_proxy_config,
 )
 from storage import init_db, is_seen, mark_seen
-from scraper import scrape_keyword
+from scraper import scrape_keyword, SessionExpiredError
 from classifier import classify
-from notifier import notify_batch
+from notifier import notify_batch, notify_alert
+
+ALERT_MARKER = ".session_alert_sent"
+ALERT_THROTTLE_HOURS = 6
 
 
 def log(msg: str) -> None:
     print(f"[{datetime.now().strftime('%H:%M:%S')}] {msg}")
+
+
+def _should_alert_session() -> bool:
+    if not os.path.exists(ALERT_MARKER):
+        return True
+    age = time.time() - os.path.getmtime(ALERT_MARKER)
+    return age > ALERT_THROTTLE_HOURS * 3600
+
+
+def _mark_session_alerted() -> None:
+    open(ALERT_MARKER, "w").close()
+
+
+def _clear_session_alert() -> None:
+    if os.path.exists(ALERT_MARKER):
+        os.remove(ALERT_MARKER)
 
 
 def _is_recent(post: dict, cutoff: datetime) -> bool:
@@ -42,6 +62,15 @@ async def run_once(conn, page) -> None:
         log(f"搜尋關鍵字: {kw}")
         try:
             posts = await scrape_keyword(page, kw)
+        except SessionExpiredError as e:
+            log(f"⚠️ session 過期: {e}")
+            if _should_alert_session():
+                notify_alert(
+                    "⚠️ Threads session 已過期,本機重跑 `python login.py` "
+                    "後把新的 `storage_state.json` 上傳到 server"
+                )
+                _mark_session_alerted()
+            return
         except Exception as e:
             log(f"  scrape 失敗: {e}")
             continue
@@ -68,6 +97,9 @@ async def run_once(conn, page) -> None:
                 )
             else:
                 mark_seen(conn, post["url"], notified=False)
+
+    # 能順利跑完所有關鍵字代表 session 還活著,清掉警示節流
+    _clear_session_alert()
 
     if not matches:
         log("本輪無 match")

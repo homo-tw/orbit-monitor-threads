@@ -49,3 +49,18 @@ def _flush(
             results[i] = True
     except Exception as e:
         print(f"[notifier] webhook 失敗: {e}")
+
+
+def notify_alert(message: str) -> bool:
+    if not DISCORD_WEBHOOK_URL:
+        print("[notifier] DISCORD_WEBHOOK_URL 未設定,跳過")
+        return False
+    try:
+        r = requests.post(
+            DISCORD_WEBHOOK_URL, json={"content": message}, timeout=10
+        )
+        r.raise_for_status()
+        return True
+    except Exception as e:
+        print(f"[notifier] alert 失敗: {e}")
+        return False
