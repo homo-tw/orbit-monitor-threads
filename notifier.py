@@ -2,6 +2,7 @@ import requests
 from config import DISCORD_WEBHOOK_URL
 
 HEADER = "以下是最近可能有類似需求的貼文:"
+WEBHOOK_USERNAME = "Orbit 海巡號"
 
 
 def notify_batch(items: list[tuple[dict, dict]]) -> list[bool]:
@@ -42,7 +43,9 @@ def _flush(
     content = f"{HEADER}\n{body}" if with_header else body
     try:
         r = requests.post(
-            DISCORD_WEBHOOK_URL, json={"content": content}, timeout=10
+            DISCORD_WEBHOOK_URL,
+            json={"content": content, "username": WEBHOOK_USERNAME},
+            timeout=10,
         )
         r.raise_for_status()
         for i in idxs:
@@ -57,7 +60,9 @@ def notify_alert(message: str) -> bool:
         return False
     try:
         r = requests.post(
-            DISCORD_WEBHOOK_URL, json={"content": message}, timeout=10
+            DISCORD_WEBHOOK_URL,
+            json={"content": message, "username": WEBHOOK_USERNAME},
+            timeout=10,
         )
         r.raise_for_status()
         return True
