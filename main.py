@@ -10,6 +10,7 @@ from config import (
     KEYWORDS,
     SCAN_INTERVAL_SECONDS,
     MAX_AGE_DAYS,
+    MATCH_CONFIDENCE_THRESHOLD,
     STORAGE_STATE_PATH,
     DB_PATH,
     get_proxy_config,
@@ -89,13 +90,18 @@ async def run_once(conn, page) -> None:
                 log(f"  classify 失敗: {e}")
                 continue
 
-            if result["match"]:
+            if result["match"] and result["confidence"] >= MATCH_CONFIDENCE_THRESHOLD:
                 matches.append((post, result))
                 log(
                     f"  ✅ match @{post['author']} "
                     f"(conf={result['confidence']:.2f}) {post['url']}"
                 )
             else:
+                if result["match"]:
+                    log(
+                        f"  ⚠️ match 但 confidence {result['confidence']:.2f} "
+                        f"< {MATCH_CONFIDENCE_THRESHOLD},略過: {post['url']}"
+                    )
                 mark_seen(conn, post["url"], notified=False)
 
     # 能順利跑完所有關鍵字代表 session 還活著,清掉警示節流
