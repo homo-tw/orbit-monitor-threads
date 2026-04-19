@@ -49,7 +49,7 @@ EXTRACT_JS = r"""
 """
 
 
-async def scrape_keyword(page, keyword: str, scrolls: int = 3):
+async def scrape_keyword(page, keyword: str, scrolls: int = 5):
     url = SEARCH_URL.format(q=quote(keyword))
     await page.goto(url, wait_until="domcontentloaded")
 
