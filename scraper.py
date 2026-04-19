@@ -71,7 +71,7 @@ async def scrape_keyword(page, keyword: str, scrolls: int = 5):
 
     for _ in range(scrolls):
         await page.mouse.wheel(0, 4000)
-        await asyncio.sleep(1.5)
+        await asyncio.sleep(4)
 
     posts = await page.evaluate(EXTRACT_JS)
     # 過濾太短的雜訊
