@@ -5,7 +5,7 @@ from playwright.async_api import async_playwright
 
 from config import STORAGE_STATE_PATH, DB_PATH, get_proxy_config
 from storage import init_db
-from main import run_once, log
+from main import run_once, run_line_lead_once, log
 
 
 async def main() -> None:
@@ -26,6 +26,7 @@ async def main() -> None:
         page = await context.new_page()
 
         await run_once(conn, page)
+        await run_line_lead_once(conn, page)
         await browser.close()
 
 

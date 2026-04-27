@@ -75,3 +75,13 @@ CLASSIFIER_SYSTEM_PROMPT = """你是一個嚴格的分類器,判斷 Threads 貼�
 
 STORAGE_STATE_PATH = "storage_state.json"
 DB_PATH = "posts.db"
+
+# 「賣家用 LINE 接預約」線索 pipeline:命中後不丟 Discord,改寫 Google Sheet
+LINE_LEAD_KEYWORDS = [
+    "line 預約",
+    "LINE 預約",
+    "賴 預約",
+]
+GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
+SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "1v2UY1wcEWdOuiJ1NbJpi5r6_vxkrC0P4maG-KFY9MWM")
+SHEET_NAME = os.getenv("SHEET_NAME", "工作表1")

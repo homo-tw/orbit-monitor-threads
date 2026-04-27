@@ -8,6 +8,7 @@ from playwright.async_api import async_playwright
 
 from config import (
     KEYWORDS,
+    LINE_LEAD_KEYWORDS,
     SCAN_INTERVAL_SECONDS,
     MAX_AGE_DAYS,
     MATCH_CONFIDENCE_THRESHOLD,
@@ -16,9 +17,10 @@ from config import (
     get_proxy_config,
 )
 from storage import init_db, is_seen, mark_seen
-from scraper import scrape_keyword, SessionExpiredError
+from scraper import scrape_keyword, fetch_threads_profile, SessionExpiredError
 from classifier import classify
 from notifier import notify_batch, notify_alert
+from line_lead import extract_line_url, load_cache, save_account
 
 ALERT_MARKER = ".session_alert_sent"
 ALERT_THROTTLE_HOURS = 6
@@ -117,6 +119,67 @@ async def run_once(conn, page) -> None:
     log(f"通知 {sum(results)}/{len(results)} 則")
 
 
+async def run_line_lead_once(conn, page) -> None:
+    if not LINE_LEAD_KEYWORDS:
+        return
+
+    cache = load_cache()
+    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
+    new_count = 0
+
+    for kw in LINE_LEAD_KEYWORDS:
+        log(f"[LINE] 搜尋: {kw}")
+        try:
+            posts = await scrape_keyword(page, kw)
+        except SessionExpiredError as e:
+            log(f"[LINE] ⚠️ session 過期: {e}")
+            return
+        except Exception as e:
+            log(f"[LINE]   scrape 失敗: {e}")
+            continue
+
+        recent = [p for p in posts if _is_recent(p, cutoff)]
+        log(f"[LINE]   抓到 {len(posts)} 則,近 {MAX_AGE_DAYS} 天內 {len(recent)} 則")
+
+        for post in recent:
+            if is_seen(conn, post["url"]):
+                continue
+            author_key = post["author"].lower()
+
+            if author_key in cache:
+                mark_seen(conn, post["url"], notified=False)
+                continue
+
+            try:
+                bio, search_blob = await fetch_threads_profile(page, post["author"])
+            except SessionExpiredError as e:
+                log(f"[LINE] ⚠️ session 過期(profile): {e}")
+                return
+            except Exception as e:
+                log(f"[LINE]   fetch_profile @{post['author']} 失敗: {e}")
+                continue
+
+            line_url = extract_line_url(search_blob)
+            if not line_url:
+                log(f"[LINE]   @{post['author']} bio/連結無 LINE,略過")
+                mark_seen(conn, post["url"], notified=False)
+                continue
+
+            profile_url = f"https://www.threads.net/@{post['author']}"
+            try:
+                wrote = save_account(author_key, bio[:500], profile_url, line_url, cache)
+                mark_seen(conn, post["url"], notified=wrote)
+                if wrote:
+                    new_count += 1
+                    log(f"[LINE]   ✅ 寫入 @{post['author']} {line_url}")
+                else:
+                    log(f"[LINE]   ⏭️ @{post['author']} 已存在 sheet")
+            except Exception as e:
+                log(f"[LINE]   寫 sheet 失敗 @{post['author']}: {e}")
+
+    log(f"[LINE] 本輪新增 {new_count} 個帳號")
+
+
 async def main() -> None:
     conn = init_db(DB_PATH)
 
@@ -143,6 +206,10 @@ async def main() -> None:
                 await run_once(conn, page)
             except Exception:
                 log("run_once 例外:\n" + traceback.format_exc())
+            try:
+                await run_line_lead_once(conn, page)
+            except Exception:
+                log("run_line_lead_once 例外:\n" + traceback.format_exc())
             log(f"休息 {SCAN_INTERVAL_SECONDS}s")
             await asyncio.sleep(SCAN_INTERVAL_SECONDS)
 

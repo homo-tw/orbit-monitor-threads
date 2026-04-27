@@ -7,6 +7,46 @@ class SessionExpiredError(Exception):
 
 
 SEARCH_URL = "https://www.threads.net/search?q={q}&serp_type=default"
+PROFILE_URL = "https://www.threads.net/@{username}"
+
+PROFILE_EXTRACT_JS = r"""
+() => {
+  let bio = '';
+  const og = document.querySelector('meta[property="og:description"]');
+  if (og) bio = (og.getAttribute('content') || '').trim();
+  if (!bio) {
+    const d = document.querySelector('meta[name="description"]');
+    if (d) bio = (d.getAttribute('content') || '').trim();
+  }
+  const links = [];
+  document.querySelectorAll('a[href^="http"]').forEach(a => {
+    const h = a.getAttribute('href') || '';
+    if (!h) return;
+    if (h.includes('threads.net')) return;
+    if (h.includes('instagram.com')) return;
+    if (h.includes('facebook.com')) return;
+    links.push(h);
+  });
+  return { bio, links };
+}
+"""
+
+
+async def fetch_threads_profile(page, username: str) -> tuple[str, str]:
+    """訪問 Threads 個人頁,回傳 (bio, search_blob)。
+    search_blob = bio + 所有外部連結串接,給 line_lead.extract_line_url 用。"""
+    await page.goto(PROFILE_URL.format(username=username), wait_until="domcontentloaded")
+    if "/login" in page.url or "/accounts/login" in page.url:
+        raise SessionExpiredError(f"profile 被導到登入頁: {page.url}")
+    await asyncio.sleep(2)
+    try:
+        data = await page.evaluate(PROFILE_EXTRACT_JS)
+    except Exception:
+        return "", ""
+    bio = (data.get("bio") or "").strip()
+    links = data.get("links") or []
+    search_blob = bio + "\n" + "\n".join(links)
+    return bio, search_blob
 
 EXTRACT_JS = r"""
 () => {
