@@ -159,23 +159,33 @@ async def run_line_lead_once(conn, page) -> None:
                 return
             except Exception as e:
                 log(f"[LINE]   fetch_profile @{post['author']} 失敗: {e}")
-                continue
+                bio, search_blob = "", ""
 
             line_url = extract_line_url(search_blob)
+            source = "profile"
+            sheet_bio = bio
+
             if not line_url:
-                log(f"[LINE]   @{post['author']} bio/連結無 LINE,略過")
+                post_text = post.get("text") or ""
+                line_url = extract_line_url(post_text)
+                if line_url:
+                    source = "post"
+                    sheet_bio = bio or post_text[:500]
+
+            if not line_url:
+                log(f"[LINE]   @{post['author']} 無 LINE 連結(profile/post 都沒),略過")
                 mark_seen(conn, post["url"], notified=False)
                 continue
 
             profile_url = f"https://www.threads.net/@{post['author']}"
             try:
-                wrote = save_account(author_key, bio[:500], profile_url, line_url, cache)
+                wrote = save_account(author_key, sheet_bio[:500], profile_url, line_url, cache)
                 mark_seen(conn, post["url"], notified=wrote)
                 if wrote:
                     new_count += 1
-                    log(f"[LINE]   ✅ 寫入 @{post['author']} {line_url}")
+                    log(f"[LINE]   ✅ 寫入 @{post['author']} {line_url} ({source})")
                 else:
-                    log(f"[LINE]   ⏭️ @{post['author']} 已存在 sheet")
+                    log(f"[LINE]   ⏭️ @{post['author']} 或 {line_url} 已存在 sheet")
             except Exception as e:
                 log(f"[LINE]   寫 sheet 失敗 @{post['author']}: {e}")
 
