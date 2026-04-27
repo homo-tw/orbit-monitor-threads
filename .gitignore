@@ -1,6 +1,8 @@
 .env
 storage_state.json
 posts.db
+credentials.json
+.claude/
 __pycache__/
 *.pyc
 .venv/
