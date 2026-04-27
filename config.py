@@ -82,6 +82,8 @@ LINE_LEAD_KEYWORDS = [
     "LINE 預約",
     "賴 預約",
 ]
+LINE_LEAD_MAX_AGE_DAYS = int(os.getenv("LINE_LEAD_MAX_AGE_DAYS", "30"))
+LINE_LEAD_SCROLLS = int(os.getenv("LINE_LEAD_SCROLLS", "30"))
 GOOGLE_CREDENTIALS_FILE = os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json")
 SPREADSHEET_ID = os.getenv("SPREADSHEET_ID", "1v2UY1wcEWdOuiJ1NbJpi5r6_vxkrC0P4maG-KFY9MWM")
 SHEET_NAME = os.getenv("SHEET_NAME", "工作表1")

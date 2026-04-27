@@ -9,6 +9,8 @@ from playwright.async_api import async_playwright
 from config import (
     KEYWORDS,
     LINE_LEAD_KEYWORDS,
+    LINE_LEAD_MAX_AGE_DAYS,
+    LINE_LEAD_SCROLLS,
     SCAN_INTERVAL_SECONDS,
     MAX_AGE_DAYS,
     MATCH_CONFIDENCE_THRESHOLD,
@@ -124,13 +126,13 @@ async def run_line_lead_once(conn, page) -> None:
         return
 
     cache = load_cache()
-    cutoff = datetime.now(timezone.utc) - timedelta(days=MAX_AGE_DAYS)
+    cutoff = datetime.now(timezone.utc) - timedelta(days=LINE_LEAD_MAX_AGE_DAYS)
     new_count = 0
 
     for kw in LINE_LEAD_KEYWORDS:
         log(f"[LINE] 搜尋: {kw}")
         try:
-            posts = await scrape_keyword(page, kw)
+            posts = await scrape_keyword(page, kw, scrolls=LINE_LEAD_SCROLLS)
         except SessionExpiredError as e:
             log(f"[LINE] ⚠️ session 過期: {e}")
             return
@@ -139,7 +141,7 @@ async def run_line_lead_once(conn, page) -> None:
             continue
 
         recent = [p for p in posts if _is_recent(p, cutoff)]
-        log(f"[LINE]   抓到 {len(posts)} 則,近 {MAX_AGE_DAYS} 天內 {len(recent)} 則")
+        log(f"[LINE]   抓到 {len(posts)} 則,近 {LINE_LEAD_MAX_AGE_DAYS} 天內 {len(recent)} 則")
 
         for post in recent:
             if is_seen(conn, post["url"]):
