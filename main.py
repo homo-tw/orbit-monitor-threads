@@ -22,7 +22,7 @@ from storage import init_db, is_seen, mark_seen
 from scraper import scrape_keyword, fetch_threads_profile, SessionExpiredError
 from classifier import classify
 from notifier import notify_batch, notify_alert
-from line_lead import extract_line_url, load_cache, save_account
+from line_lead import extract_line_url, load_cache, resolve_line_id_url, save_account
 
 ALERT_MARKER = ".session_alert_sent"
 ALERT_THROTTLE_HOURS = 6
@@ -161,19 +161,27 @@ async def run_line_lead_once(conn, page) -> None:
                 log(f"[LINE]   fetch_profile @{post['author']} 失敗: {e}")
                 bio, search_blob = "", ""
 
-            line_url = extract_line_url(search_blob)
+            raw_line_url = extract_line_url(search_blob)
             source = "profile"
             sheet_bio = bio
 
-            if not line_url:
+            if not raw_line_url:
                 post_text = post.get("text") or ""
-                line_url = extract_line_url(post_text)
-                if line_url:
+                raw_line_url = extract_line_url(post_text)
+                if raw_line_url:
                     source = "post"
                     sheet_bio = bio or post_text[:500]
 
-            if not line_url:
+            if not raw_line_url:
                 log(f"[LINE]   @{post['author']} 無 LINE 連結(profile/post 都沒),略過")
+                mark_seen(conn, post["url"], notified=False)
+                continue
+
+            line_url = resolve_line_id_url(raw_line_url)
+            if not line_url:
+                log(
+                    f"[LINE]   @{post['author']} {raw_line_url} 無法展開成 @ID(可能是 LIFF/群組/失效),略過"
+                )
                 mark_seen(conn, post["url"], notified=False)
                 continue
 

@@ -1,7 +1,9 @@
 import os
 import re
+from urllib.parse import unquote
 
 import gspread
+import requests
 
 from config import GOOGLE_CREDENTIALS_FILE, SPREADSHEET_ID, SHEET_NAME
 
@@ -10,6 +12,19 @@ LINE_ME_PATTERN = re.compile(
     r"https?://line\.me/(?:R/)?ti/p/@?[A-Za-z0-9_\-\.]+", re.IGNORECASE
 )
 LIN_EE_NO_PROTO = re.compile(r"\blin\.ee/[A-Za-z0-9_\-]+", re.IGNORECASE)
+
+_LINE_TI_ID_RE = re.compile(
+    r"line\.me/(?:R/)?ti/p/(?:@|%40)?([A-Za-z0-9_\-\.]+)", re.IGNORECASE
+)
+_PAGE_LINE_ID_RE = re.compile(
+    r"page\.line\.me/(?:@|%40)?([A-Za-z0-9_\-\.]+)", re.IGNORECASE
+)
+
+_RESOLVE_UA = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+)
+_resolve_cache: dict[str, str] = {}
 
 
 def extract_line_url(text: str) -> str:
@@ -23,6 +38,46 @@ def extract_line_url(text: str) -> str:
     if m:
         return f"https://{m.group(0)}"
     return ""
+
+
+def _extract_line_id(url: str) -> str:
+    decoded = unquote(url or "")
+    m = _LINE_TI_ID_RE.search(decoded) or _PAGE_LINE_ID_RE.search(decoded)
+    if not m:
+        return ""
+    return m.group(1).lstrip("@").lower()
+
+
+def resolve_line_id_url(line_url: str) -> str:
+    """把 lin.ee 短網址展開成正規化的 https://line.me/R/ti/p/@xxxxx。
+    已經是 line.me / page.line.me 形式的也一併標準化。
+    展不開(LIFF / 群組邀請 / 失效)回空字串。"""
+    if not line_url:
+        return ""
+
+    direct = _extract_line_id(line_url)
+    if direct:
+        return f"https://line.me/R/ti/p/@{direct}"
+
+    if line_url in _resolve_cache:
+        return _resolve_cache[line_url]
+
+    try:
+        r = requests.get(
+            line_url,
+            allow_redirects=True,
+            timeout=10,
+            headers={"User-Agent": _RESOLVE_UA},
+        )
+    except requests.RequestException as e:
+        print(f"[LINE] resolve {line_url} 失敗: {e}", flush=True)
+        _resolve_cache[line_url] = ""
+        return ""
+
+    final_id = _extract_line_id(r.url)
+    resolved = f"https://line.me/R/ti/p/@{final_id}" if final_id else ""
+    _resolve_cache[line_url] = resolved
+    return resolved
 
 
 def username_from_url(url: str) -> str:
