@@ -167,3 +167,26 @@ async def scrape_keyword(page, keyword: str, scrolls: int = 5):
     posts = await page.evaluate(EXTRACT_JS)
     # 過濾太短的雜訊
     return [p for p in posts if len(p.get("text", "")) >= 20]
+
+
+async def scrape_post_replies(page, op_post_url: str, scrolls: int = 5):
+    """進貼文詳情頁,滾動載入 replies,回傳 reply 清單(扣除 OP 本身)。
+    op_post_url 是 /@author/post/id 形式的相對 URL。"""
+    full_url = f"https://www.threads.com{op_post_url}"
+    await page.goto(full_url, wait_until="domcontentloaded", timeout=30000)
+    current = page.url
+    if "/login" in current or "/accounts/login" in current:
+        raise SessionExpiredError(f"post 詳情頁被導到登入頁: {current}")
+
+    try:
+        await page.wait_for_selector('a[href*="/post/"]', timeout=8000)
+    except Exception:
+        return []
+
+    for _ in range(scrolls):
+        await page.mouse.wheel(0, 4000)
+        await asyncio.sleep(3)
+
+    posts = await page.evaluate(EXTRACT_JS)
+    # 扣掉 OP 自己;reply 文字常很短(像「lin.ee/xxx」),不套用長度過濾
+    return [p for p in posts if p.get("author") and p.get("url") != op_post_url]
