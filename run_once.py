@@ -1,11 +1,24 @@
 import asyncio
 import os
+from datetime import datetime
+from pathlib import Path
 
 from playwright.async_api import async_playwright
 
 from config import STORAGE_STATE_PATH, DB_PATH, get_proxy_config
 from storage import init_db
 from main import run_once, run_line_lead_once, log
+
+CRON_LOG = Path(__file__).parent / "cron.log"
+
+
+def _log_startup() -> None:
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    try:
+        with open(CRON_LOG, "a", encoding="utf-8") as f:
+            f.write(f"[{ts}] started\n")
+    except Exception:
+        pass
 
 
 async def main() -> None:
@@ -31,4 +44,5 @@ async def main() -> None:
 
 
 if __name__ == "__main__":
+    _log_startup()
     asyncio.run(main())
