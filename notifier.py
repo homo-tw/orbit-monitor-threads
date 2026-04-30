@@ -13,7 +13,7 @@ def notify_batch(items: list[tuple[dict, dict]]) -> list[bool]:
         return [False] * len(items)
 
     lines = [
-        f"- [@{post['author']}](https://www.threads.net{post['url']})"
+        f"- [@{post['author']}](https://www.threads.com{post['url']})"
         for post, _ in items
     ]
     results = [False] * len(items)

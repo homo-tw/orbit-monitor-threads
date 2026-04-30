@@ -22,7 +22,13 @@ from storage import init_db, is_seen, mark_seen
 from scraper import scrape_keyword, fetch_threads_profile, SessionExpiredError
 from classifier import classify
 from notifier import notify_batch, notify_alert
-from line_lead import extract_line_url, load_cache, resolve_line_id_url, save_account
+from line_lead import (
+    extract_line_url,
+    extract_line_via_llm,
+    load_cache,
+    resolve_line_id_url,
+    save_account,
+)
 
 ALERT_MARKER = ".session_alert_sent"
 ALERT_THROTTLE_HOURS = 6
@@ -164,32 +170,47 @@ async def run_line_lead_once(conn, page) -> None:
                 bio, search_blob = "", ""
 
             raw_line_url = extract_line_url(search_blob)
-            source = "profile"
-            sheet_bio = bio
+            source = "profile-url"
 
             if not raw_line_url:
                 post_text = post.get("text") or ""
                 raw_line_url = extract_line_url(post_text)
                 if raw_line_url:
-                    source = "post"
-                    sheet_bio = bio or post_text[:500]
+                    source = "post-url"
 
-            if not raw_line_url:
-                log(f"[LINE]   @{post['author']} 無 LINE 連結(profile/post 都沒),略過")
-                mark_seen(conn, post["url"], notified=False)
-                continue
+            line_url = ""
+            if raw_line_url:
+                line_url = resolve_line_id_url(raw_line_url)
+                if not line_url:
+                    log(
+                        f"[LINE]   @{post['author']} {raw_line_url} 無法展開成 @ID(可能是 LIFF/群組/失效),略過"
+                    )
+                    mark_seen(conn, post["url"], notified=False)
+                    continue
+            else:
+                # regex 抓不到,丟 LLM 看 bio 有沒有「LINE: @xxx」這種文字寫法
+                llm_result = await extract_line_via_llm(bio)
+                if not llm_result:
+                    log(f"[LINE]   @{post['author']} 無 LINE(regex/LLM 都沒),略過")
+                    mark_seen(conn, post["url"], notified=False)
+                    continue
+                if "lin.ee" in llm_result.lower() or "line.me" in llm_result.lower():
+                    line_url = resolve_line_id_url(llm_result)
+                    if not line_url:
+                        log(
+                            f"[LINE]   @{post['author']} LLM 給 {llm_result} 但無法展開,略過"
+                        )
+                        mark_seen(conn, post["url"], notified=False)
+                        continue
+                    source = "llm-url"
+                else:
+                    # @xxx 文字版 — 保留原始字形,直接當 L 欄值
+                    line_url = llm_result
+                    source = "llm-text"
 
-            line_url = resolve_line_id_url(raw_line_url)
-            if not line_url:
-                log(
-                    f"[LINE]   @{post['author']} {raw_line_url} 無法展開成 @ID(可能是 LIFF/群組/失效),略過"
-                )
-                mark_seen(conn, post["url"], notified=False)
-                continue
-
-            profile_url = f"https://www.threads.net/@{post['author']}"
+            profile_url = f"https://www.threads.com/@{post['author']}"
             try:
-                wrote = save_account(author_key, sheet_bio[:500], profile_url, line_url, cache)
+                wrote = save_account(author_key, bio[:500], profile_url, line_url, cache)
                 mark_seen(conn, post["url"], notified=wrote)
                 if wrote:
                     new_count += 1

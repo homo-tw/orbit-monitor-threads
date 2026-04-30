@@ -4,8 +4,15 @@ from urllib.parse import unquote
 
 import gspread
 import requests
+from openai import AsyncOpenAI
 
-from config import GOOGLE_CREDENTIALS_FILE, SPREADSHEET_ID, SHEET_NAME
+from config import (
+    GOOGLE_CREDENTIALS_FILE,
+    OPENAI_API_KEY,
+    OPENAI_MODEL,
+    SHEET_NAME,
+    SPREADSHEET_ID,
+)
 
 LIN_EE_PATTERN = re.compile(r"https?://lin\.ee/[A-Za-z0-9_\-]+", re.IGNORECASE)
 LINE_ME_PATTERN = re.compile(
@@ -91,6 +98,56 @@ def line_key(line_url: str) -> str:
     return line_url.strip().rstrip("/").lower() if line_url else ""
 
 
+_llm_client: AsyncOpenAI | None = None
+
+
+def _get_llm_client() -> AsyncOpenAI:
+    global _llm_client
+    if _llm_client is None:
+        _llm_client = AsyncOpenAI(api_key=OPENAI_API_KEY)
+    return _llm_client
+
+
+_LLM_PROMPT = """從以下 Threads 個人介紹文字中,找出 LINE 聯絡方式並回傳。
+
+可能的形式:
+- LINE 短網址,例如 lin.ee/abc123 或 line.me/ti/p/@abc123
+- LINE 帳號 ID,前面通常有 'LINE:' / '賴:' / 'Line@' 等字,例如 @abc123
+
+注意事項:
+- 帳號 ID 可能用花體字 / 全形 / 數學符號等變體寫,例如 ＠𝟪𝟢𝟨𝗉𝗄𝗐𝗒𝗇 — 請**完整保留原始字形**回傳,不要做任何正規化或字元轉換
+- 短網址直接回傳完整 URL(若含 https:// 一併回傳;無 https 也照抄)
+- 找不到回傳空字串
+- 不要有任何解釋或多餘文字,只回傳那一個值
+
+文字:
+{bio}
+
+回傳:"""
+
+
+async def extract_line_via_llm(bio: str) -> str:
+    """regex 抓不到 LINE URL 時,丟 bio 給 LLM 抽 LINE 識別。
+    回傳:
+    - 'lin.ee/...' / 'line.me/...' / 'page.line.me/...' 短網址(交給 resolve_line_id_url 展開)
+    - '@xxx' 形式的 LINE @ID(保留原始 unicode 字形,直接寫 sheet)
+    - 找不到回傳空字串
+    """
+    if not bio or not bio.strip():
+        return ""
+    try:
+        resp = await _get_llm_client().chat.completions.create(
+            model=OPENAI_MODEL,
+            messages=[{"role": "user", "content": _LLM_PROMPT.format(bio=bio[:1500])}],
+            max_tokens=80,
+            temperature=0,
+        )
+    except Exception as e:
+        print(f"[LINE] LLM 抽取失敗: {e}", flush=True)
+        return ""
+    return (resp.choices[0].message.content or "").strip()
+
+
 _worksheet = None
 
 
@@ -108,7 +165,7 @@ def _get_worksheet():
 
 def load_cache() -> dict:
     """讀 sheet 拿到已收集帳號,key 同時包含:
-    - Threads username(小寫,只看 E 欄含 threads.net 的列)
+    - Threads username(小寫,只看 E 欄含 threads.net/threads.com 的列)
     - LINE URL(整列 L 欄都納入,含 orbit-spider 寫的 IG lin.ee)
     任一命中就視為已存在。"""
     if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
@@ -121,7 +178,7 @@ def load_cache() -> dict:
         col_l = ws.col_values(12)
         cache: dict = {}
         for i, url in enumerate(col_e):
-            if not url or "threads.net/" not in url:
+            if not url or ("threads.net/" not in url and "threads.com/" not in url):
                 continue
             username = username_from_url(url)
             if username:

@@ -6,23 +6,66 @@ class SessionExpiredError(Exception):
     pass
 
 
-SEARCH_URL = "https://www.threads.net/search?q={q}&serp_type=default"
-PROFILE_URL = "https://www.threads.net/@{username}"
+SEARCH_URL = "https://www.threads.com/search?q={q}&serp_type=default"
+PROFILE_URL = "https://www.threads.com/@{username}"
 
 PROFILE_EXTRACT_JS = r"""
 () => {
-  let bio = '';
-  const og = document.querySelector('meta[property="og:description"]');
-  if (og) bio = (og.getAttribute('content') || '').trim();
-  if (!bio) {
-    const d = document.querySelector('meta[name="description"]');
-    if (d) bio = (d.getAttribute('content') || '').trim();
+  const FOLLOWER_RE = /follower|粉絲|粉丝|フォロワー/i;
+
+  function pickBioByFollower() {
+    // 找含 follower 文字的最內層元素(子元素都不含)
+    let leaf = null;
+    for (const el of document.querySelectorAll('*')) {
+      const t = (el.innerText || '').trim();
+      if (!t || t.length > 80) continue;
+      if (!FOLLOWER_RE.test(t)) continue;
+      if (![...el.children].some(c => FOLLOWER_RE.test(c.innerText || ''))) {
+        leaf = el;
+      }
+    }
+    if (!leaf) return '';
+
+    // 上 5 層 parent
+    let p = leaf;
+    for (let i = 0; i < 5; i++) {
+      if (!p.parentElement) return '';
+      p = p.parentElement;
+    }
+
+    // 在 5 層 parent 的 children 裡反找含 follower 的 idx,取它前面 2 個 children 當 bio
+    const kids = [...p.children];
+    let idx = -1;
+    for (let i = kids.length - 1; i >= 0; i--) {
+      if (FOLLOWER_RE.test(kids[i].innerText || '')) {
+        idx = i;
+        break;
+      }
+    }
+    if (idx < 1) return '';
+    const start = Math.max(0, idx - 2);
+    return kids.slice(start, idx)
+      .map(c => (c.innerText || '').trim())
+      .filter(Boolean)
+      .join('\n')
+      .trim();
   }
+
+  let bio = pickBioByFollower();
+  if (!bio) {
+    const og = document.querySelector('meta[property="og:description"]');
+    if (og) bio = (og.getAttribute('content') || '').trim();
+    if (!bio) {
+      const d = document.querySelector('meta[name="description"]');
+      if (d) bio = (d.getAttribute('content') || '').trim();
+    }
+  }
+
   const links = [];
   document.querySelectorAll('a[href^="http"]').forEach(a => {
     const h = a.getAttribute('href') || '';
     if (!h) return;
-    if (h.includes('threads.net')) return;
+    if (h.includes('threads.net') || h.includes('threads.com')) return;
     if (h.includes('instagram.com')) return;
     if (h.includes('facebook.com')) return;
     links.push(h);
@@ -38,7 +81,15 @@ async def fetch_threads_profile(page, username: str) -> tuple[str, str]:
     await page.goto(PROFILE_URL.format(username=username), wait_until="domcontentloaded")
     if "/login" in page.url or "/accounts/login" in page.url:
         raise SessionExpiredError(f"profile 被導到登入頁: {page.url}")
-    await asyncio.sleep(2)
+    # 等 follower 字樣 render(JS 渲染才有,沒有 SSR);沒等到也不擋,fallback og:description
+    try:
+        await page.wait_for_function(
+            """() => /follower|粉絲|粉丝|フォロワー/i.test(document.body.innerText)""",
+            timeout=10000,
+        )
+    except Exception:
+        pass
+    await asyncio.sleep(1)
     try:
         data = await page.evaluate(PROFILE_EXTRACT_JS)
     except Exception:

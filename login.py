@@ -14,7 +14,7 @@ def main() -> None:
         browser = p.chromium.launch(headless=False)
         context = browser.new_context()
         page = context.new_page()
-        page.goto("https://www.threads.net/login")
+        page.goto("https://www.threads.com/login")
         input("請在瀏覽器完成登入,然後回到這裡按 Enter 儲存 session...")
         context.storage_state(path=STORAGE_STATE_PATH)
         print(f"已儲存到 {STORAGE_STATE_PATH}")
