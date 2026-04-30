@@ -76,11 +76,16 @@ CLASSIFIER_SYSTEM_PROMPT = """你是一個嚴格的分類器,判斷 Threads 貼�
 STORAGE_STATE_PATH = "storage_state.json"
 DB_PATH = "posts.db"
 
-# 「賣家用 LINE 接預約」線索 pipeline:命中後不丟 Discord,改寫 Google Sheet
+# 「賣家用 LINE 接預約」線索 pipeline:用產業關鍵字搜尋,撈作者 profile,
+# 自介或貼文有 LINE 連結就寫 Google Sheet
 LINE_LEAD_KEYWORDS = [
-    "line 預約",
-    "LINE 預約",
-    "賴 預約",
+    "美甲",
+    "美髮",
+    "瑜珈",
+    "健身",
+    "身心靈",
+    "皮拉提斯",
+    "諮商",
 ]
 LINE_LEAD_MAX_AGE_DAYS = int(os.getenv("LINE_LEAD_MAX_AGE_DAYS", "30"))
 LINE_LEAD_SCROLLS = int(os.getenv("LINE_LEAD_SCROLLS", "30"))

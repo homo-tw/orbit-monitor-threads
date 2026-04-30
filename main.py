@@ -127,6 +127,7 @@ async def run_line_lead_once(conn, page) -> None:
 
     cache = load_cache()
     cutoff = datetime.now(timezone.utc) - timedelta(days=LINE_LEAD_MAX_AGE_DAYS)
+    checked_authors: set[str] = set()  # 同一輪內同 author 只抓一次 profile
     new_count = 0
 
     for kw in LINE_LEAD_KEYWORDS:
@@ -148,9 +149,10 @@ async def run_line_lead_once(conn, page) -> None:
                 continue
             author_key = post["author"].lower()
 
-            if author_key in cache:
+            if author_key in cache or author_key in checked_authors:
                 mark_seen(conn, post["url"], notified=False)
                 continue
+            checked_authors.add(author_key)
 
             try:
                 bio, search_blob = await fetch_threads_profile(page, post["author"])
