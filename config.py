@@ -87,6 +87,8 @@ LINE_LEAD_KEYWORDS = [
     "皮拉提斯",
     "諮商",
     "芳療",
+    "算命",
+    "寵物美容",
 ]
 LINE_LEAD_MAX_AGE_DAYS = int(os.getenv("LINE_LEAD_MAX_AGE_DAYS", "30"))
 LINE_LEAD_SCROLLS = int(os.getenv("LINE_LEAD_SCROLLS", "30"))
