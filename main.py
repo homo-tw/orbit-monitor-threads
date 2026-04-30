@@ -1,5 +1,6 @@
 import asyncio
 import os
+import re
 import time
 import traceback
 from contextlib import asynccontextmanager
@@ -170,6 +171,31 @@ async def run_once(conn, page) -> None:
     log(f"通知 {sum(results)}/{len(results)} 則")
 
 
+# 接預約訊號:中文直接 substring,英文用 word boundary(避免誤命中 admin/random)
+_BOOKING_CJK = ("預約", "預訂", "私訊")
+_BOOKING_EN_RE = re.compile(r"\b(dm|book|booking)\b", re.IGNORECASE)
+
+
+def _has_booking_signal(text: str) -> bool:
+    if not text:
+        return False
+    if any(k in text for k in _BOOKING_CJK):
+        return True
+    return bool(_BOOKING_EN_RE.search(text))
+
+
+def _is_hk_username(username: str) -> bool:
+    """username 結尾 hk 或含 _hk / .hk / hk_ / hk. 視為香港帳號。"""
+    u = username.lower()
+    return (
+        u.endswith("hk")
+        or "_hk" in u
+        or ".hk" in u
+        or "hk_" in u
+        or "hk." in u
+    )
+
+
 async def _process_author_candidate(
     page,
     cache: dict,
@@ -187,6 +213,10 @@ async def _process_author_candidate(
         return False
     checked_authors.add(author_key)
 
+    if _is_hk_username(author):
+        log(f"[LINE]   @{author} HK 帳號,略過")
+        return False
+
     try:
         bio, search_blob = await fetch_threads_profile(page, author)
     except SessionExpiredError:
@@ -195,13 +225,14 @@ async def _process_author_candidate(
         log(f"[LINE]   fetch_profile @{author} 失敗: {e}")
         bio, search_blob = "", ""
 
-    # 預約 filter:primary_text(post/reply 文)、extra(reply 場景下傳入 OP 文)、bio 至少一個有
-    if (
-        "預約" not in primary_text
-        and "預約" not in extra_booking_context
-        and "預約" not in bio
+    # 接預約訊號 filter:primary_text(post/reply 文)、extra(reply 場景下傳入 OP 文)、bio
+    # 至少一個含「預約 / 預訂 / 私訊 / DM / book / booking」才算服務商家
+    if not (
+        _has_booking_signal(primary_text)
+        or _has_booking_signal(extra_booking_context)
+        or _has_booking_signal(bio)
     ):
-        log(f"[LINE]   @{author} 無「預約」字樣,略過")
+        log(f"[LINE]   @{author} 無預約/預訂/私訊/DM/book 訊號,略過")
         return False
 
     raw_line_url = extract_line_url(search_blob)
