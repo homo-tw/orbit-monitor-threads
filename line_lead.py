@@ -165,19 +165,19 @@ def _get_worksheet():
 
 def load_cache() -> dict:
     """讀 sheet 拿到已收集帳號,key 同時包含:
-    - Threads username(小寫,只看 E 欄含 threads.net/threads.com 的列)
-    - LINE URL(整列 L 欄都納入,含 orbit-spider 寫的 IG lin.ee)
+    - Threads username(小寫,只看 F 欄含 threads.net/threads.com 的列)
+    - LINE URL(整列 M 欄都納入,含 orbit-spider 寫的 IG lin.ee)
     任一命中就視為已存在。"""
     if not os.path.exists(GOOGLE_CREDENTIALS_FILE):
         print(f"[LINE] 找不到 {GOOGLE_CREDENTIALS_FILE},以空 cache 啟動", flush=True)
         return {}
     try:
         ws = _get_worksheet()
-        col_d = ws.col_values(4)
         col_e = ws.col_values(5)
-        col_l = ws.col_values(12)
+        col_f = ws.col_values(6)
+        col_m = ws.col_values(13)
         cache: dict = {}
-        for i, url in enumerate(col_e):
+        for i, url in enumerate(col_f):
             if not url or ("threads.net/" not in url and "threads.com/" not in url):
                 continue
             username = username_from_url(url)
@@ -185,10 +185,10 @@ def load_cache() -> dict:
                 cache[username] = {
                     "username": username,
                     "url": url,
-                    "bio": col_d[i] if i < len(col_d) else "",
+                    "bio": col_e[i] if i < len(col_e) else "",
                 }
         threads_count = len(cache)
-        for url in col_l:
+        for url in col_m:
             k = line_key(url)
             if k:
                 cache.setdefault(k, {"line_url": url})
@@ -207,25 +207,25 @@ def save_account(
     username: str, bio: str, profile_url: str, line_url: str, cache: dict
 ) -> bool:
     """寫一筆帳號到 sheet。回傳 True=新寫入,False=已存在。
-    寫入前再讀一次 sheet E/L 欄 double-check,防止跨 process 併發重複寫。"""
+    寫入前再讀一次 sheet F/M 欄 double-check,防止跨 process 併發重複寫。"""
     user_key = username.lower()
     l_key = line_key(line_url)
     if user_key in cache or (l_key and l_key in cache):
         return False
 
     ws = _get_worksheet()
-    existing_users = {username_from_url(u) for u in ws.col_values(5) if u}
-    existing_lines = {line_key(u) for u in ws.col_values(12) if u}
+    existing_users = {username_from_url(u) for u in ws.col_values(6) if u}
+    existing_lines = {line_key(u) for u in ws.col_values(13) if u}
     if user_key in existing_users or (l_key and l_key in existing_lines):
         cache[user_key] = {"username": user_key, "url": profile_url, "bio": bio}
         if l_key:
             cache[l_key] = {"line_url": line_url}
         return False
 
-    col_d = ws.col_values(4)
-    row = len(col_d) + 1
-    ws.update(f"D{row}:E{row}", [[bio, profile_url]])
-    ws.update(f"L{row}:L{row}", [[line_url]])
+    col_e = ws.col_values(5)
+    row = len(col_e) + 1
+    ws.update(f"E{row}:F{row}", [[bio, profile_url]])
+    ws.update(f"M{row}:M{row}", [[line_url]])
 
     cache[user_key] = {"username": user_key, "url": profile_url, "bio": bio}
     if l_key:
