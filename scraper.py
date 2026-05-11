@@ -1,4 +1,5 @@
 import asyncio
+import re
 from urllib.parse import quote
 
 
@@ -12,9 +13,9 @@ PROFILE_URL = "https://www.threads.com/@{username}"
 PROFILE_EXTRACT_JS = r"""
 () => {
   const FOLLOWER_RE = /follower|粉絲|粉丝|フォロワー/i;
+  const FOLLOWER_NUM_RE = /([\d.,]+\s*[KMBkmb萬万千亿億]?)\s*(?:followers?|粉絲|粉丝|フォロワー)/i;
 
-  function pickBioByFollower() {
-    // 找含 follower 文字的最內層元素(子元素都不含)
+  function findFollowerLeaf() {
     let leaf = null;
     for (const el of document.querySelectorAll('*')) {
       const t = (el.innerText || '').trim();
@@ -24,15 +25,17 @@ PROFILE_EXTRACT_JS = r"""
         leaf = el;
       }
     }
-    if (!leaf) return '';
+    return leaf;
+  }
 
+  function pickBioByLeaf(leaf) {
+    if (!leaf) return '';
     // 上 5 層 parent
     let p = leaf;
     for (let i = 0; i < 5; i++) {
       if (!p.parentElement) return '';
       p = p.parentElement;
     }
-
     // 在 5 層 parent 的 children 裡反找含 follower 的 idx,取它前面 2 個 children 當 bio
     const kids = [...p.children];
     let idx = -1;
@@ -51,7 +54,22 @@ PROFILE_EXTRACT_JS = r"""
       .trim();
   }
 
-  let bio = pickBioByFollower();
+  function pickFollowerCount(leaf) {
+    if (!leaf) return '';
+    // leaf 自己往上 4 層找「數字 + follower 詞」的緊鄰組合
+    let p = leaf;
+    for (let i = 0; i < 4; i++) {
+      const t = (p.innerText || '').trim();
+      const m = t.match(FOLLOWER_NUM_RE);
+      if (m) return m[1].replace(/\s+/g, '').trim();
+      if (!p.parentElement) break;
+      p = p.parentElement;
+    }
+    return '';
+  }
+
+  const leaf = findFollowerLeaf();
+  let bio = pickBioByLeaf(leaf);
   if (!bio) {
     const og = document.querySelector('meta[property="og:description"]');
     if (og) bio = (og.getAttribute('content') || '').trim();
@@ -61,23 +79,34 @@ PROFILE_EXTRACT_JS = r"""
     }
   }
 
+  const followerCount = pickFollowerCount(leaf);
+
   const links = [];
+  let igUsername = '';
   document.querySelectorAll('a[href^="http"]').forEach(a => {
     const h = a.getAttribute('href') || '';
     if (!h) return;
     if (h.includes('threads.net') || h.includes('threads.com')) return;
-    if (h.includes('instagram.com')) return;
+    if (h.includes('instagram.com')) {
+      if (!igUsername) {
+        const m = h.match(/instagram\.com\/([A-Za-z0-9_.]+)/);
+        if (m) igUsername = m[1];
+      }
+      return;
+    }
     if (h.includes('facebook.com')) return;
     links.push(h);
   });
-  return { bio, links };
+  return { bio, links, followerCount, igUsername };
 }
 """
 
 
-async def fetch_threads_profile(page, username: str) -> tuple[str, str]:
-    """訪問 Threads 個人頁,回傳 (bio, search_blob)。
-    search_blob = bio + 所有外部連結串接,給 line_lead.extract_line_url 用。"""
+async def fetch_threads_profile(page, username: str) -> tuple[str, str, str, str]:
+    """訪問 Threads 個人頁,回傳 (bio, search_blob, follower_count, ig_username)。
+    search_blob = bio + 所有外部連結串接,給 line_lead.extract_line_url 用。
+    follower_count 是頁面顯示的原始字串(例:'1,234'、'1.2M'、'1.2萬'),抓不到回空字串。
+    ig_username 是 bio 連到 instagram.com/<xxx> 的 xxx,沒有回空字串。"""
     await page.goto(PROFILE_URL.format(username=username), wait_until="domcontentloaded")
     if "/login" in page.url or "/accounts/login" in page.url:
         raise SessionExpiredError(f"profile 被導到登入頁: {page.url}")
@@ -93,11 +122,49 @@ async def fetch_threads_profile(page, username: str) -> tuple[str, str]:
     try:
         data = await page.evaluate(PROFILE_EXTRACT_JS)
     except Exception:
-        return "", ""
+        return "", "", "", ""
     bio = (data.get("bio") or "").strip()
     links = data.get("links") or []
+    follower_count = (data.get("followerCount") or "").strip()
+    ig_username = (data.get("igUsername") or "").strip()
     search_blob = bio + "\n" + "\n".join(links)
-    return bio, search_blob
+    return bio, search_blob, follower_count, ig_username
+
+
+_IG_FOLLOWER_RE = re.compile(
+    r"([\d.,]+\s*[KMBkmb萬万千亿億]?)\s*(?:Followers?|粉絲|粉丝|フォロワー)",
+    re.IGNORECASE,
+)
+
+
+async def fetch_instagram_follower_count(page, username: str) -> str:
+    """訪問 IG profile,從 og:description meta 抓 follower 人數。
+    匿名訪客 IG 可能擋登入牆,抓不到一律回空字串(不 raise)。"""
+    if not username:
+        return ""
+    try:
+        await page.goto(
+            f"https://www.instagram.com/{username}/",
+            wait_until="domcontentloaded",
+            timeout=15000,
+        )
+    except Exception:
+        return ""
+    if "/accounts/login" in page.url or "/login" in page.url:
+        return ""
+    try:
+        og = await page.evaluate(
+            """() => {
+              const m = document.querySelector('meta[property="og:description"]');
+              return m ? (m.getAttribute('content') || '') : '';
+            }"""
+        )
+    except Exception:
+        return ""
+    if not og:
+        return ""
+    m = _IG_FOLLOWER_RE.search(og)
+    return m.group(1).replace(" ", "").strip() if m else ""
 
 EXTRACT_JS = r"""
 () => {

@@ -24,6 +24,7 @@ from config import (
 from storage import init_db, is_seen, mark_seen
 from scraper import (
     SessionExpiredError,
+    fetch_instagram_follower_count,
     fetch_threads_profile,
     scrape_keyword,
     scrape_post_replies,
@@ -218,12 +219,14 @@ async def _process_author_candidate(
         return False
 
     try:
-        bio, search_blob = await fetch_threads_profile(page, author)
+        bio, search_blob, follower_count, ig_username = await fetch_threads_profile(
+            page, author
+        )
     except SessionExpiredError:
         raise
     except Exception as e:
         log(f"[LINE]   fetch_profile @{author} 失敗: {e}")
-        bio, search_blob = "", ""
+        bio, search_blob, follower_count, ig_username = "", "", "", ""
 
     # 接預約訊號 filter:primary_text(post/reply 文)、extra(reply 場景下傳入 OP 文)、bio
     # 至少一個含「預約 / 預訂 / 私訊 / DM / book / booking」才算服務商家
@@ -266,8 +269,24 @@ async def _process_author_candidate(
             source = f"{source_prefix}llm-text"
 
     profile_url = f"https://www.threads.com/@{author}"
+
+    ig_handle = ig_username or author
     try:
-        wrote = save_account(author_key, bio[:500], profile_url, line_url, cache)
+        ig_follower_count = await fetch_instagram_follower_count(page, ig_handle)
+    except Exception as e:
+        log(f"[LINE]   fetch IG follower @{ig_handle} 失敗: {e}")
+        ig_follower_count = ""
+
+    try:
+        wrote = save_account(
+            author_key,
+            bio[:500],
+            profile_url,
+            line_url,
+            follower_count,
+            ig_follower_count,
+            cache,
+        )
         if wrote:
             log(f"[LINE]   ✅ 寫入 @{author} {line_url} ({source})")
         else:

@@ -56,15 +56,15 @@ def _extract_line_id(url: str) -> str:
 
 
 def resolve_line_id_url(line_url: str) -> str:
-    """把 lin.ee 短網址展開成正規化的 https://line.me/R/ti/p/@xxxxx。
-    已經是 line.me / page.line.me 形式的也一併標準化。
+    """把 lin.ee 短網址展開成正規化的 @xxxxx LINE ID。
+    已經是 line.me / page.line.me 形式的也一併萃成 @ID。
     展不開(LIFF / 群組邀請 / 失效)回空字串。"""
     if not line_url:
         return ""
 
     direct = _extract_line_id(line_url)
     if direct:
-        return f"https://line.me/R/ti/p/@{direct}"
+        return f"@{direct}"
 
     if line_url in _resolve_cache:
         return _resolve_cache[line_url]
@@ -82,7 +82,7 @@ def resolve_line_id_url(line_url: str) -> str:
         return ""
 
     final_id = _extract_line_id(r.url)
-    resolved = f"https://line.me/R/ti/p/@{final_id}" if final_id else ""
+    resolved = f"@{final_id}" if final_id else ""
     _resolve_cache[line_url] = resolved
     return resolved
 
@@ -95,7 +95,12 @@ def username_from_url(url: str) -> str:
 
 
 def line_key(line_url: str) -> str:
-    return line_url.strip().rstrip("/").lower() if line_url else ""
+    if not line_url:
+        return ""
+    extracted = _extract_line_id(line_url)
+    if extracted:
+        return f"@{extracted}"
+    return line_url.strip().rstrip("/").lower()
 
 
 _llm_client: AsyncOpenAI | None = None
@@ -204,10 +209,17 @@ def load_cache() -> dict:
 
 
 def save_account(
-    username: str, bio: str, profile_url: str, line_url: str, cache: dict
+    username: str,
+    bio: str,
+    profile_url: str,
+    line_url: str,
+    threads_follower_count: str,
+    ig_follower_count: str,
+    cache: dict,
 ) -> bool:
     """寫一筆帳號到 sheet。回傳 True=新寫入,False=已存在。
-    寫入前再讀一次 sheet F/M 欄 double-check,防止跨 process 併發重複寫。"""
+    寫入前再讀一次 sheet F/M 欄 double-check,防止跨 process 併發重複寫。
+    N 欄 = Threads follower 數, O 欄 = IG follower 數。"""
     user_key = username.lower()
     l_key = line_key(line_url)
     if user_key in cache or (l_key and l_key in cache):
@@ -225,7 +237,10 @@ def save_account(
     col_e = ws.col_values(5)
     row = len(col_e) + 1
     ws.update(f"E{row}:F{row}", [[bio, profile_url]])
-    ws.update(f"M{row}:M{row}", [[line_url]])
+    ws.update(
+        f"M{row}:O{row}",
+        [[line_url, threads_follower_count, ig_follower_count]],
+    )
 
     cache[user_key] = {"username": user_key, "url": profile_url, "bio": bio}
     if l_key:
