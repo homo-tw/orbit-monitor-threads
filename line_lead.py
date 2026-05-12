@@ -1,5 +1,6 @@
 import os
 import re
+import unicodedata
 from urllib.parse import unquote
 
 import gspread
@@ -32,6 +33,32 @@ _RESOLVE_UA = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
 )
 _resolve_cache: dict[str, str] = {}
+
+
+_BIO_LINE_KEYWORD_RE = re.compile(
+    # 大寫獨立字 LINE (排除 "ONLINE" / "DEADLINE")
+    r"(?<![A-Za-z])LINE(?![A-Za-z])"
+    # line 後接明確標記 (前必須非字母,排掉 "online:" / "deadline:")
+    r"|(?<![A-Za-z])[Ll]ine\s*(?:@|＠|:|：|ID|id|帳號)"
+    # CJK 上下文裡的 Line — 兩側都要避開字母,免得 "deadline 是" / "中文Linehead" 誤判
+    r"|(?<=[一-鿿])\s*[Ll]ine(?![A-Za-z])"
+    r"|(?<![A-Za-z])[Ll]ine\s*(?=[一-鿿])"
+    # 其他寫法
+    r"|@line|＠line|賴|ライン|라인",
+)
+
+
+def bio_mentions_line(bio: str) -> bool:
+    """bio 文字裡有沒有 LINE 字眼。沒提 LINE 的 bio 別丟給 LLM,避免幻覺。"""
+    return bool(bio) and bool(_BIO_LINE_KEYWORD_RE.search(bio))
+
+
+def normalize_handle(s: str) -> str:
+    """LLM 可能回 ＠𝟪𝟢𝟨𝗉𝗄 之類花體變體 — NFKC 後拿來跟 username 比對。
+    僅供比對用,不要把這個正規化過的值寫進 sheet。"""
+    if not s:
+        return ""
+    return unicodedata.normalize("NFKC", s).strip().lstrip("@＠").strip().lower()
 
 
 def extract_line_url(text: str) -> str:

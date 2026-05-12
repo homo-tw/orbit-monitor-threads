@@ -32,9 +32,11 @@ from scraper import (
 from classifier import classify
 from notifier import notify_batch, notify_alert
 from line_lead import (
+    bio_mentions_line,
     extract_line_url,
     extract_line_via_llm,
     load_cache,
+    normalize_handle,
     resolve_line_id_url,
     save_account,
 )
@@ -253,6 +255,9 @@ async def _process_author_candidate(
             log(f"[LINE]   @{author} {raw_line_url} 無法展開成 @ID,略過")
             return False
     else:
+        if not bio_mentions_line(bio):
+            log(f"[LINE]   @{author} bio 沒提到 LINE,略過 LLM")
+            return False
         llm_result = await extract_line_via_llm(bio)
         if not llm_result:
             log(f"[LINE]   @{author} 無 LINE(regex/LLM 都沒),略過")
@@ -264,7 +269,18 @@ async def _process_author_candidate(
                 return False
             source = f"{source_prefix}llm-url"
         else:
-            # @xxx 文字版 — 保留原始字形,直接當 L 欄值
+            # @xxx 文字版 — 比對 author / IG handle,避免 LLM 把原 username 當 LINE
+            normalized = normalize_handle(llm_result)
+            if len(normalized) < 3:
+                log(f"[LINE]   @{author} LLM 回 {llm_result!r} 不像 LINE ID,略過")
+                return False
+            ig_norm = ig_username.lower() if ig_username else ""
+            if normalized == author_key or (ig_norm and normalized == ig_norm):
+                log(
+                    f"[LINE]   @{author} LLM 回 {llm_result!r} 等於 Threads/IG handle,略過"
+                )
+                return False
+            # 保留原始字形,直接當 L 欄值
             line_url = llm_result
             source = f"{source_prefix}llm-text"
 
