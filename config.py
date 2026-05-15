@@ -101,3 +101,23 @@ GOOGLE_PLACES_API_KEY = os.getenv("GOOGLE_PLACES_API_KEY", "")
 PLACES_REGION_CODE = os.getenv("PLACES_REGION_CODE", "tw")
 PLACES_LANGUAGE_CODE = os.getenv("PLACES_LANGUAGE_CODE", "zh-TW")
 PLACES_MAX_RESULTS_PER_KEYWORD = int(os.getenv("PLACES_MAX_RESULTS_PER_KEYWORD", "20"))
+PLACES_RADIUS_METERS = float(os.getenv("PLACES_RADIUS_METERS", "2000"))
+# 沒寫進 sheet 的 place_id 多久後可重試 (寫過的永遠跳過)
+PLACES_DEDUPE_TTL_DAYS = int(os.getenv("PLACES_DEDUPE_TTL_DAYS", "30"))
+
+# 每個 anchor 一筆 (lat, lng) — Places API 會用 locationRestriction.circle 鎖在
+# 以 anchor 為圓心、半徑 PLACES_RADIUS_METERS 公尺的圓內
+PLACES_ANCHORS = [
+    {"name": "台北車站", "lat": 25.0478, "lng": 121.5170},
+    {"name": "台中車站", "lat": 24.1372, "lng": 120.6869},
+    {"name": "台南車站", "lat": 22.9979, "lng": 120.2128},
+    {"name": "高雄車站", "lat": 22.6394, "lng": 120.3022},
+    {"name": "左營高鐵", "lat": 22.6873, "lng": 120.3076},
+    {"name": "烏日高鐵", "lat": 24.1119, "lng": 120.6155},
+    {"name": "西門", "lat": 25.0421, "lng": 121.5077},
+    {"name": "中山", "lat": 25.0526, "lng": 121.5202},
+    {"name": "忠孝復興", "lat": 25.0419, "lng": 121.5443},
+    {"name": "信義安和", "lat": 25.0331, "lng": 121.5527},
+    {"name": "公館", "lat": 25.0146, "lng": 121.5347},
+    {"name": "士林", "lat": 25.0935, "lng": 121.5260},
+]

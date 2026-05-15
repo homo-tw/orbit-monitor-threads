@@ -268,12 +268,18 @@ def save_account(
             cache[l_key] = {"line_url": line_url}
         return False
 
-    col_e = ws.col_values(5)
-    row = len(col_e) + 1
-    ws.update(f"E{row}:F{row}", [[bio, profile_url]])
+    # 不能用 col E(bio)算 row:Places 路線常 bio 空字串,gspread col_values 會 strip
+    # trailing empties,len 不會增加,結果每筆都疊在同一個 row 互蓋。改用 max(F, M, P) —
+    # F (profile_url) 寫入時保證非空,M/P 也都會寫,任一夠長就推到下一個 row。
+    row = max(
+        len(ws.col_values(6)),  # F = profile URL
+        len(ws.col_values(13)),  # M = LINE URL
+        len(ws.col_values(16)),  # P = source
+    ) + 1
+    ws.update(values=[[bio, profile_url]], range_name=f"E{row}:F{row}")
     ws.update(
-        f"M{row}:P{row}",
-        [[line_url, threads_follower_count, ig_follower_count, source]],
+        values=[[line_url, threads_follower_count, ig_follower_count, source]],
+        range_name=f"M{row}:P{row}",
     )
 
     cache[user_key] = {"username": user_key, "url": profile_url, "bio": bio}
