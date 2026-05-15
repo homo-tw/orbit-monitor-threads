@@ -25,10 +25,12 @@ from storage import init_db, is_seen, mark_seen
 from scraper import (
     SessionExpiredError,
     fetch_instagram_follower_count,
+    fetch_instagram_profile,
     fetch_threads_profile,
     scrape_keyword,
     scrape_post_replies,
 )
+from places import PlacesConfigError, search_places
 from classifier import classify
 from notifier import notify_batch, notify_alert
 from line_lead import (
@@ -385,6 +387,157 @@ async def run_line_lead_once(conn, page) -> None:
             mark_seen(conn, post["url"], notified=op_wrote)
 
     log(f"[LINE] 本輪新增 {new_count} 個帳號")
+
+
+_IG_URL_RE = re.compile(r"instagram\.com/([A-Za-z0-9_.]+)", re.IGNORECASE)
+_IG_NON_USER_PATHS = {"p", "reel", "reels", "explore", "accounts", "stories", "tv"}
+
+
+def _ig_username_from_url(url: str) -> str:
+    if not url:
+        return ""
+    m = _IG_URL_RE.search(url)
+    if not m:
+        return ""
+    handle = m.group(1).rstrip("/").strip()
+    if handle.lower() in _IG_NON_USER_PATHS:
+        return ""
+    return handle
+
+
+async def _process_place_candidate(
+    page,
+    cache: dict,
+    checked_places: set,
+    place: dict,
+) -> bool:
+    """處理一筆 Google Places 結果。
+    website 是 IG → 進 IG 抓 bio,跟 Threads 路線一樣套 regex+LLM。
+    其他情況 → 把 name/summary/website/address 串成 blob 給 regex+LLM。"""
+    place_id = place.get("place_id") or ""
+    name = place.get("name") or ""
+    website = place.get("website_uri") or ""
+    summary = place.get("editorial_summary") or ""
+    address = place.get("formatted_address") or ""
+    maps_url = place.get("maps_uri") or ""
+
+    if not place_id or place_id in checked_places:
+        return False
+    checked_places.add(place_id)
+
+    ig_username = _ig_username_from_url(website)
+    ig_bio = ""
+    ig_followers = ""
+    if ig_username:
+        try:
+            ig_bio, ig_followers = await fetch_instagram_profile(page, ig_username)
+        except Exception as e:
+            log(f"[PLACES]   fetch IG @{ig_username} 失敗 ({name}): {e}")
+
+    if ig_username and ig_bio:
+        # IG 有抓到 bio → 跟 Threads 路線一樣用 bio 當 LLM 入料
+        bio = ig_bio
+        profile_url = f"https://www.instagram.com/{ig_username}/"
+        # 用 IG handle 當 dedupe key,跨 Threads/Places 同帳號也不重複寫
+        user_key = ig_username.lower()
+        search_blob = "\n".join(filter(None, [bio, website, summary, name]))
+        llm_input = bio
+        label = f"@{ig_username} ({name})"
+    else:
+        # 沒 IG / IG bio 抓不到 → 把 Places 元資料串起來丟 regex+LLM
+        bio = summary
+        profile_url = maps_url or website or f"https://maps.google.com/?cid={place_id}"
+        user_key = f"places:{place_id}".lower()
+        search_blob = "\n".join(filter(None, [name, summary, website, address]))
+        llm_input = search_blob
+        label = name or place_id
+
+    if user_key in cache:
+        return False
+
+    raw_line_url = extract_line_url(search_blob)
+    source_tag = "places-url"
+
+    line_url = ""
+    if raw_line_url:
+        line_url = resolve_line_id_url(raw_line_url)
+        if not line_url:
+            log(f"[PLACES]   {label} {raw_line_url} 無法展開,略過")
+            return False
+    else:
+        if not bio_mentions_line(llm_input):
+            return False
+        llm_result = await extract_line_via_llm(llm_input)
+        if not llm_result:
+            return False
+        if "lin.ee" in llm_result.lower() or "line.me" in llm_result.lower():
+            line_url = resolve_line_id_url(llm_result)
+            if not line_url:
+                log(f"[PLACES]   {label} LLM 給 {llm_result} 但無法展開,略過")
+                return False
+            source_tag = "places-llm-url"
+        else:
+            normalized = normalize_handle(llm_result)
+            if len(normalized) < 3:
+                return False
+            # 防 LLM 把 IG handle 自己當 LINE ID 回傳
+            if ig_username and normalized == ig_username.lower():
+                log(f"[PLACES]   {label} LLM 回 {llm_result!r} 等於 IG handle,略過")
+                return False
+            line_url = llm_result
+            source_tag = "places-llm-text"
+
+    try:
+        wrote = save_account(
+            user_key,
+            bio[:500],
+            profile_url,
+            line_url,
+            "",
+            ig_followers,
+            cache,
+            source="google-places",
+        )
+        if wrote:
+            log(f"[PLACES]   ✅ 寫入 {label} → {line_url} ({source_tag})")
+        else:
+            log(f"[PLACES]   ⏭️ {label} 或 {line_url} 已存在 sheet")
+        return wrote
+    except Exception as e:
+        log(f"[PLACES]   寫 sheet 失敗 {label}: {e}")
+        return False
+
+
+async def run_places_lead_once(conn, page) -> None:
+    if not LINE_LEAD_KEYWORDS:
+        return
+
+    cache = load_cache()
+    checked_places: set[str] = set()
+    new_count = 0
+
+    for kw in LINE_LEAD_KEYWORDS:
+        log(f"[PLACES] 搜尋: {kw}")
+        try:
+            results = search_places(kw)
+        except PlacesConfigError as e:
+            log(f"[PLACES] 設定錯誤,終止: {e}")
+            return
+        except Exception as e:
+            log(f"[PLACES]   search 失敗: {e}")
+            continue
+        log(f"[PLACES]   抓到 {len(results)} 個 place")
+
+        for place in results:
+            try:
+                wrote = await _process_place_candidate(page, cache, checked_places, place)
+            except Exception as e:
+                log(f"[PLACES]   process 失敗 {place.get('name')}: {e}")
+                continue
+            if wrote:
+                new_count += 1
+
+    log(f"[PLACES] 本輪新增 {new_count} 個帳號")
 
 
 async def main() -> None:

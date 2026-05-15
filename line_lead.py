@@ -210,7 +210,13 @@ def load_cache() -> dict:
         col_m = ws.col_values(13)
         cache: dict = {}
         for i, url in enumerate(col_f):
-            if not url or ("threads.net/" not in url and "threads.com/" not in url):
+            if not url:
+                continue
+            # Threads / IG profile URL 都拿來當 dedupe key,避免 Places 帶 IG 跟 Threads 撞號重做白工
+            if not any(
+                host in url
+                for host in ("threads.net/", "threads.com/", "instagram.com/")
+            ):
                 continue
             username = username_from_url(url)
             if username:
@@ -243,10 +249,11 @@ def save_account(
     threads_follower_count: str,
     ig_follower_count: str,
     cache: dict,
+    source: str = "threads",
 ) -> bool:
     """寫一筆帳號到 sheet。回傳 True=新寫入,False=已存在。
     寫入前再讀一次 sheet F/M 欄 double-check,防止跨 process 併發重複寫。
-    N 欄 = Threads follower 數, O 欄 = IG follower 數。"""
+    N 欄 = Threads follower 數, O 欄 = IG follower 數, P 欄 = 來源 tag。"""
     user_key = username.lower()
     l_key = line_key(line_url)
     if user_key in cache or (l_key and l_key in cache):
@@ -265,8 +272,8 @@ def save_account(
     row = len(col_e) + 1
     ws.update(f"E{row}:F{row}", [[bio, profile_url]])
     ws.update(
-        f"M{row}:O{row}",
-        [[line_url, threads_follower_count, ig_follower_count]],
+        f"M{row}:P{row}",
+        [[line_url, threads_follower_count, ig_follower_count, source]],
     )
 
     cache[user_key] = {"username": user_key, "url": profile_url, "bio": bio}

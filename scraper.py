@@ -136,12 +136,15 @@ _IG_FOLLOWER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# og:description 範例:'1,234 Followers, 56 Following, 78 Posts - @user on Instagram: "bio text"'
+_IG_BIO_RE = re.compile(r'on Instagram[:\s]*["“]([^"”]+)["”]')
 
-async def fetch_instagram_follower_count(page, username: str) -> str:
-    """訪問 IG profile,從 og:description meta 抓 follower 人數。
-    匿名訪客 IG 可能擋登入牆,抓不到一律回空字串(不 raise)。"""
+
+async def fetch_instagram_profile(page, username: str) -> tuple[str, str]:
+    """訪問 IG profile,從 og:description 抓 (bio, follower_count)。
+    匿名訪客 IG 可能擋登入牆,抓不到一律回 ("", "")(不 raise)。"""
     if not username:
-        return ""
+        return "", ""
     try:
         await page.goto(
             f"https://www.instagram.com/{username}/",
@@ -149,9 +152,9 @@ async def fetch_instagram_follower_count(page, username: str) -> str:
             timeout=15000,
         )
     except Exception:
-        return ""
+        return "", ""
     if "/accounts/login" in page.url or "/login" in page.url:
-        return ""
+        return "", ""
     try:
         og = await page.evaluate(
             """() => {
@@ -160,11 +163,20 @@ async def fetch_instagram_follower_count(page, username: str) -> str:
             }"""
         )
     except Exception:
-        return ""
+        return "", ""
     if not og:
-        return ""
-    m = _IG_FOLLOWER_RE.search(og)
-    return m.group(1).replace(" ", "").strip() if m else ""
+        return "", ""
+    follower_m = _IG_FOLLOWER_RE.search(og)
+    follower = follower_m.group(1).replace(" ", "").strip() if follower_m else ""
+    bio_m = _IG_BIO_RE.search(og)
+    bio = bio_m.group(1).strip() if bio_m else ""
+    return bio, follower
+
+
+async def fetch_instagram_follower_count(page, username: str) -> str:
+    """Backward-compat wrapper:只回 follower count。"""
+    _, follower = await fetch_instagram_profile(page, username)
+    return follower
 
 EXTRACT_JS = r"""
 () => {
